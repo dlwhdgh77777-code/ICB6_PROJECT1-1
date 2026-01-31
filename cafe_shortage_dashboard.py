@@ -94,7 +94,7 @@ st.markdown("""
 @st.cache_data
 def load_data():
     # 1. 직장인(배후 수요) 데이터 로드
-    worker_rel = '01_data_processing/data/사업체현황(조직형태별_동별)_20260131105815.csv'
+    worker_rel = '01_data_processing/data/사업체현황(산업대분류별_동별)_20260131105841.csv'
     worker_path = get_data_path(worker_rel)
     worker_df = read_csv_safe(worker_path, header=None, skiprows=5)
     
@@ -105,7 +105,7 @@ def load_data():
     workers = workers[workers['자치구'] != '합계']
     
     # 2. 카페(기존 공급) 데이터 로드
-    cafe_rel = '01_data_processing/final_data_files/서울시_동별_업종별_점포수_상세.csv'
+    cafe_rel = '01_data_processing/final_data_files/서울시_동별_업종별_점포수_중분류_상세.csv'
     cafe_path = get_data_path(cafe_rel)
     cafe_df = read_csv_safe(cafe_path)
     target_industries = ['커피점/카페', '커피전문점/카페/다방']
@@ -138,12 +138,14 @@ def load_data():
     
     # 6. 분석 지표 계산
     merged['부족지수'] = merged['종사자수'] / (merged['카페수'] + 1)
-    merged['점포당평균매출'] = (merged['월평균매출액'] / (merged['카페수'] + 1)).round(0)
     
-    # 부족지수 정규화 (0~100점)
+    # 점포당 평균 매출 계산 (단위: 만원)
+    merged['점포당평균매출'] = (merged['월평균매출액'] / (merged['카페수'] + 1) / 10000).round(0)
+    
+    # 부족지수 정규화 (0~100점) - 필터링 전 전체 기준 점수
     max_idx = merged['부족지수'].max()
     if max_idx > 0:
-        merged['부족점수'] = (merged['부족지수'] / max_idx * 100).round(2)
+        merged['부족점수'] = (merged['부족지수'] / max_idx * 100).round(1)
     else:
         merged['부족점수'] = 0
     
@@ -195,13 +197,13 @@ try:
     with c1: st.metric("분석 지역 수", f"{len(view_df)}개 동")
     with c2: st.metric("총 직장인 수", f"{int(view_df['종사자수'].sum()):,}명")
     
-    # 평균 매출액 계산 (NaN 방지)
+    # 평균 매출액 계산 (이미 데이터 로드 시 만원 단위로 계산됨)
     with c3:
         sales_sub = view_df[view_df['점포당평균매출'] > 0]
         if not sales_sub.empty:
             avg_val = sales_sub['점포당평균매출'].mean()
             if not pd.isna(avg_val):
-                st.metric("평균 점포당 매출", f"{int(avg_val/10000):,}만원")
+                st.metric("평균 점포당 매출", f"{int(avg_val):,}만원")
             else:
                 st.metric("평균 점포당 매출", "데이터 없음")
         else:
@@ -224,13 +226,18 @@ try:
     tab1, tab2, tab3 = st.tabs(["🚀 창업 기회 분석", "💰 매출 현황 분석", "📊 데이터 테이블"])
     
     with tab1:
-        st.subheader("창업 기회 점수 상위 지역 (배후수요/공급)")
+        st.subheader("📍 창업 기회 점수 상위 지역 (내림차순 정렬)")
         top_n = min(30, len(view_df))
+        # 부족점수 기준 내림차순 정렬
         top_30 = view_df.sort_values('부족점수', ascending=False).head(top_n)
+        
         fig = px.bar(top_30, x='행정동', y='부족점수', color='부족점수',
                      text_auto='.1f', color_continuous_scale='Reds',
-                     hover_data=['자치구', '종사자수', '카페수', '점포당평균매출'])
-        fig.update_layout(template="plotly_white", height=500, margin=dict(t=50, b=50, l=50, r=50))
+                     hover_data=['자치구', '종사자수', '카페수', '점포당평균매출'],
+                     category_orders={"행정동": top_30['행정동'].tolist()}) # 정렬 고정
+        
+        fig.update_layout(template="plotly_white", height=500, margin=dict(t=50, b=50, l=50, r=50),
+                          yaxis_title="창업 기회 점수 (100점 만점)")
         st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("---")
@@ -244,12 +251,15 @@ try:
         st.plotly_chart(fig_scatter, use_container_width=True)
 
     with tab2:
-        st.subheader("지역별 점포당 평균 매출액 (추정)")
+        st.subheader("📍 지역별 점포당 평균 매출액 (내림차순 정렬)")
         top_sales = view_df.sort_values('점포당평균매출', ascending=False).head(30)
+        
         fig_sales = px.bar(top_sales, x='행정동', y='점포당평균매출', color='점포당평균매출',
                           color_continuous_scale='Viridis',
-                          labels={'점포당평균매출':'월평균 매출(원)'})
-        fig_sales.update_layout(template="plotly_white", height=500)
+                          category_orders={"행정동": top_sales['행정동'].tolist()}, # 정렬 고정
+                          labels={'점포당평균매출':'월평균 매출(만원)'})
+        fig_sales.update_layout(template="plotly_white", height=500,
+                                yaxis_title="평균 매출 (단위: 만원)")
         st.plotly_chart(fig_sales, use_container_width=True)
         
         st.markdown("---")
