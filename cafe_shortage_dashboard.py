@@ -148,15 +148,19 @@ def load_data():
     merged = merged[~merged['행정동'].isin(['상일2동', '개포3동'])]
     
     # 6. 분석 지표 계산
+    # 부족지수: 카페 1개당 감당해야 하는 직장인 수
     merged['부족지수'] = merged['종사자수'] / (merged['카페수'] + 1)
     
     # 점포당 평균 매출 계산 (단위: 만원)
+    # 월평균매출액이 '원' 단위이므로 10,000으로 나누어 '만원'으로 변환
     merged['점포당평균매출'] = (merged['월평균매출액'] / (merged['카페수'] + 1) / 10000).round(0)
     
-    # 부족지수 정규화 (0~100점) - 필터링 전 전체 기준 점수
-    max_idx = merged['부족지수'].max()
-    if max_idx > 0:
-        merged['부족점수'] = (merged['부족지수'] / max_idx * 100).round(1)
+    # 부족점수 정규화 (0~100점)
+    # 극단적인 이상치(카페 0개인 대형 오피스 등)로 인해 모두가 저조해 보이는 현상 방지
+    # 상위 1% 값을 기준으로 100점 부여 (Capping)
+    limit_val = merged['부족지수'].quantile(0.98)
+    if limit_val > 0:
+        merged['부족점수'] = (merged['부족지수'] / limit_val * 100).clip(0, 100).round(1)
     else:
         merged['부족점수'] = 0
     
@@ -239,16 +243,17 @@ try:
     with tab1:
         st.subheader("📍 창업 기회 점수 상위 지역 (내림차순 정렬)")
         top_n = min(30, len(view_df))
-        # 부족점수 기준 내림차순 정렬
+        # 부족점수 기준 내림차순 정렬 (높은 곳이 왼쪽)
         top_30 = view_df.sort_values('부족점수', ascending=False).head(top_n)
         
         fig = px.bar(top_30, x='행정동', y='부족점수', color='부족점수',
                      text_auto='.1f', color_continuous_scale='Reds',
                      hover_data=['자치구', '종사자수', '카페수', '점포당평균매출'],
-                     category_orders={"행정동": top_30['행정동'].tolist()}) # 정렬 고정
+                     category_orders={"행정동": top_30['행정동'].tolist()}) # 정렬 순서 고정
         
         fig.update_layout(template="plotly_white", height=500, margin=dict(t=50, b=50, l=50, r=50),
-                          yaxis_title="창업 기회 점수 (100점 만점)")
+                          yaxis_title="창업 기회 점수 (100점 만점)",
+                          xaxis={'categoryorder':'array', 'categoryarray':top_30['행정동'].tolist()})
         st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("---")
@@ -263,15 +268,20 @@ try:
 
     with tab2:
         st.subheader("📍 지역별 점포당 평균 매출액 (내림차순 정렬)")
-        top_sales = view_df.sort_values('점포당평균매출', ascending=False).head(30)
+        # 매출 데이터가 있는 경우만 상위 30개 추출
+        top_sales = view_df[view_df['점포당평균매출'] > 0].sort_values('점포당평균매출', ascending=False).head(30)
         
-        fig_sales = px.bar(top_sales, x='행정동', y='점포당평균매출', color='점포당평균매출',
-                          color_continuous_scale='Viridis',
-                          category_orders={"행정동": top_sales['행정동'].tolist()}, # 정렬 고정
-                          labels={'점포당평균매출':'월평균 매출(만원)'})
-        fig_sales.update_layout(template="plotly_white", height=500,
-                                yaxis_title="평균 매출 (단위: 만원)")
-        st.plotly_chart(fig_sales, use_container_width=True)
+        if not top_sales.empty:
+            fig_sales = px.bar(top_sales, x='행정동', y='점포당평균매출', color='점포당평균매출',
+                              color_continuous_scale='Viridis',
+                              text_auto=',.0f',
+                              labels={'점포당평균매출':'월평균 매출(만원)'})
+            fig_sales.update_layout(template="plotly_white", height=500,
+                                    yaxis_title="평균 매출 (단위: 만원)",
+                                    xaxis={'categoryorder':'array', 'categoryarray':top_sales['행정동'].tolist()})
+            st.plotly_chart(fig_sales, use_container_width=True)
+        else:
+            st.warning("선택한 지역에 매출 데이터가 존재하지 않습니다.")
         
         st.markdown("---")
         st.subheader("📍 객단가 vs 점포당 매출")
